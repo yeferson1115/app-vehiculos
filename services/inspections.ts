@@ -307,6 +307,26 @@ export const buildLaravelInspectionFormData = async (
 
 const getErrorResponse = (error: unknown) => (axios.isAxiosError(error) ? error.response : undefined);
 
+const MAX_SYNC_ERROR_LENGTH = 240;
+
+const isBackendStorageFullError = (message: string) => (
+  /no space left on device/i.test(message) || /errno=28/i.test(message)
+);
+
+const sanitizeTechnicalMessage = (message: string) => {
+  const normalizedMessage = message.replace(/\s+/g, ' ').trim();
+
+  if (isBackendStorageFullError(normalizedMessage)) {
+    return 'El servidor Laravel no tiene espacio disponible para escribir logs o guardar archivos. Libera espacio en el backend y vuelve a sincronizar.';
+  }
+
+  if (normalizedMessage.length <= MAX_SYNC_ERROR_LENGTH) {
+    return normalizedMessage;
+  }
+
+  return `${normalizedMessage.slice(0, MAX_SYNC_ERROR_LENGTH).trim()}...`;
+};
+
 const getSyncErrorMessage = (error: unknown) => {
   const response = getErrorResponse(error);
   const responseData = response?.data;
@@ -316,7 +336,7 @@ const getSyncErrorMessage = (error: unknown) => {
     : null;
 
   if (typeof message === 'string') {
-    return message;
+    return sanitizeTechnicalMessage(message);
   }
 
   const errors = responseData && typeof responseData === 'object'
@@ -327,12 +347,18 @@ const getSyncErrorMessage = (error: unknown) => {
     const [firstError] = Object.values(errors as Record<string, unknown>);
 
     if (Array.isArray(firstError) && typeof firstError[0] === 'string') {
-      return firstError[0];
+      return sanitizeTechnicalMessage(firstError[0]);
     }
 
     if (typeof firstError === 'string') {
-      return firstError;
+      return sanitizeTechnicalMessage(firstError);
     }
+  }
+
+  const responseText = typeof responseData === 'string' ? responseData : null;
+
+  if (responseText) {
+    return sanitizeTechnicalMessage(responseText);
   }
 
   if (response) {
@@ -340,7 +366,7 @@ const getSyncErrorMessage = (error: unknown) => {
   }
 
   if (error instanceof Error && error.message && error.message !== 'Network Error') {
-    return `Sin conexión o el servicio no respondió. Detalle técnico: ${error.message}.`;
+    return `Sin conexión o el servicio no respondió. Detalle técnico: ${sanitizeTechnicalMessage(error.message)}.`;
   }
 
   return 'Sin conexión o el servicio no respondió.';
