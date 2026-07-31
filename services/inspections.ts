@@ -118,7 +118,7 @@ const wait = (milliseconds: number) => new Promise((resolve) => {
 const resolveImageData = async (image: InspectionImage, index: number): Promise<FormDataImagePart | null> => {
   const normalizedImage = normalizeInspectionImage(image, index);
 
-  if (Platform.OS === 'web' && normalizedImage.dataUri) {
+  if (normalizedImage.dataUri) {
     return normalizedImage.dataUri;
   }
 
@@ -128,14 +128,6 @@ const resolveImageData = async (image: InspectionImage, index: number): Promise<
 
   if (!normalizedImage.uri || !isReadableLocalImageUri(normalizedImage.uri)) {
     return null;
-  }
-
-  if (Platform.OS !== 'web') {
-    return {
-      uri: normalizedImage.uri,
-      name: normalizedImage.name,
-      type: normalizedImage.type,
-    };
   }
 
   try {

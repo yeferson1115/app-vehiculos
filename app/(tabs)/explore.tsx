@@ -91,7 +91,7 @@ const persistLocalImage = async (uri: string, name: string) => {
 };
 
 const pickImage = async ({ base64 = false }: { base64?: boolean } = {}) => {
-  const includeBase64 = Platform.OS === 'web' && base64;
+  const includeBase64 = base64;
   if (Platform.OS === 'ios' || Platform.OS === 'android') {
     const cameraPermission = await ImagePicker.requestCameraPermissionsAsync();
 
