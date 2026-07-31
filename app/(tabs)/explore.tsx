@@ -135,6 +135,7 @@ export default function NewInspectionScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [savedPromptVisible, setSavedPromptVisible] = useState(false);
   const [savedPromptMessage, setSavedPromptMessage] = useState('Ingreso móvil guardado correctamente. ¿Deseas crear uno nuevo?');
+  const [savedPromptTitle, setSavedPromptTitle] = useState('Ingreso móvil guardado');
   const [saveStatusMessage, setSaveStatusMessage] = useState('');
 
   useEffect(() => {
@@ -149,6 +150,7 @@ export default function NewInspectionScreen() {
         setImagenes([]);
         setSavedPromptVisible(false);
         setSavedPromptMessage('Ingreso móvil guardado correctamente. ¿Deseas crear uno nuevo?');
+        setSavedPromptTitle('Ingreso móvil guardado');
         setSaveStatusMessage('');
         return;
       }
@@ -237,6 +239,7 @@ export default function NewInspectionScreen() {
     setImagenes([]);
     setSavedPromptVisible(false);
     setSavedPromptMessage('Ingreso móvil guardado correctamente. ¿Deseas crear uno nuevo?');
+    setSavedPromptTitle('Ingreso móvil guardado');
     setSaveStatusMessage('');
   };
 
@@ -244,7 +247,11 @@ export default function NewInspectionScreen() {
     `La inspección quedó guardada en este dispositivo, pero no se pudo sincronizar ahora.${inspection.lastSyncError ? ` Detalle: ${inspection.lastSyncError}` : ''} Se enviará automáticamente cuando haya internet.`
   );
 
-  const showCreateAnotherPrompt = (message = 'Ingreso móvil guardado correctamente. ¿Deseas crear uno nuevo?') => {
+  const showCreateAnotherPrompt = (
+    message = 'Ingreso móvil guardado correctamente. ¿Deseas crear uno nuevo?',
+    title = 'Ingreso móvil guardado',
+  ) => {
+    setSavedPromptTitle(title);
     setSavedPromptMessage(message);
     setSavedPromptVisible(true);
   };
@@ -295,23 +302,14 @@ export default function NewInspectionScreen() {
         ? 'Ingreso móvil guardado y enviado correctamente.'
         : getSyncFailureMessage(syncedItem);
 
-      if (!isEditing && wasSynced) {
-        resetForm();
-        setSaveStatusMessage(resultMessage);
-        showCreateAnotherPrompt(`${resultMessage} ¿Deseas crear uno nuevo?`);
-        return;
-      }
-
       if (!isEditing) {
         setEditingInspection(syncedItem);
       }
 
       setSaveStatusMessage(resultMessage);
-
-      Alert.alert(
-        wasSynced ? 'Inspección actualizada' : 'Inspección guardada localmente',
-        resultMessage,
-        [{ text: 'Aceptar', onPress: () => router.replace('/') }],
+      showCreateAnotherPrompt(
+        `${resultMessage} ¿Deseas crear uno nuevo?`,
+        wasSynced ? 'Inspección sincronizada' : 'Inspección guardada localmente',
       );
     } catch {
       const errorMessage = 'Ocurrió un error al guardar la inspección. Intenta nuevamente.';
@@ -464,7 +462,7 @@ export default function NewInspectionScreen() {
         onRequestClose={handleGoToInspectionList}>
         <View style={styles.alertOverlay}>
           <View style={styles.alertCard}>
-            <Text style={styles.alertTitle}>Ingreso móvil guardado</Text>
+            <Text style={styles.alertTitle}>{savedPromptTitle}</Text>
             <Text style={styles.alertMessage}>{savedPromptMessage}</Text>
             <View style={styles.alertActions}>
               <Pressable
