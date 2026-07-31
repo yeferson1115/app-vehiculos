@@ -4,6 +4,7 @@ import axios from 'axios';
 export const SESSION_KEY = 'auth_session';
 
 const DEFAULT_API_URL = 'https://api.elevaluador.com/api';
+//const DEFAULT_API_URL = 'http://localhost:81/api';
 export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? DEFAULT_API_URL;
 const LOGIN_PATH = process.env.EXPO_PUBLIC_LOGIN_PATH ?? '/login';
 let isHandlingExpiredSession = false;
