@@ -70,6 +70,8 @@ interface LaravelSaveResponse {
     avaluo?: {
       id?: number | string;
     };
+    imagenes?: unknown[];
+    imagenes_advertencias?: string[];
   };
 }
 
@@ -105,6 +107,13 @@ const isDownloadableImageUrl = (uri: string) => /^https?:\/\//i.test(uri);
 const isReadableLocalImageUri = (uri: string) => /^(file|content|asset):\/\//i.test(uri);
 
 type FormDataImagePart = string | { uri: string; name: string; type: string };
+
+const IMAGE_UPLOAD_RETRIES = 3;
+const IMAGE_UPLOAD_RETRY_DELAY_MS = 1200;
+
+const wait = (milliseconds: number) => new Promise((resolve) => {
+  setTimeout(resolve, milliseconds);
+});
 
 const resolveImageData = async (image: InspectionImage, index: number): Promise<FormDataImagePart | null> => {
   const normalizedImage = normalizeInspectionImage(image, index);
@@ -380,7 +389,6 @@ const postInspectionFormData = async (formData: FormData): Promise<LaravelSaveRe
     {
       headers: {
         Accept: 'application/json',
-        ...(Platform.OS !== 'web' ? { 'Content-Type': 'multipart/form-data' } : {}),
         ...(await getAuthHeaders()),
       },
       timeout: INSPECTION_SYNC_TIMEOUT_MS,
@@ -390,14 +398,55 @@ const postInspectionFormData = async (formData: FormData): Promise<LaravelSaveRe
   return data;
 };
 
+const getResponseImageCount = (response: LaravelSaveResponse) => (
+  Array.isArray(response.data?.imagenes) ? response.data.imagenes.length : 0
+);
+
+const getResponseImageWarnings = (response: LaravelSaveResponse) => (
+  Array.isArray(response.data?.imagenes_advertencias) ? response.data.imagenes_advertencias : []
+);
+
+const uploadImageWithRetry = async (inspection: InspectionItem, image: FormDataImagePart, imageNumber: number) => {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= IMAGE_UPLOAD_RETRIES; attempt += 1) {
+    try {
+      const response = await postInspectionFormData(await buildLaravelInspectionFormData(inspection, [image]));
+      const warnings = getResponseImageWarnings(response);
+
+      if (getResponseImageCount(response) < 1) {
+        throw new Error(
+          warnings.length > 0
+            ? `Imagen ${imageNumber}: ${warnings.join(' ')}`
+            : `Imagen ${imageNumber}: el servidor respondió, pero no confirmó que guardó la imagen.`,
+        );
+      }
+
+      return response;
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < IMAGE_UPLOAD_RETRIES) {
+        await wait(IMAGE_UPLOAD_RETRY_DELAY_MS * attempt);
+      }
+    }
+  }
+
+  throw lastError;
+};
+
 export const submitInspectionToLaravel = async (inspection: InspectionItem) => {
   const images = await resolveInspectionImagesForUpload(inspection);
 
-  if (Platform.OS !== 'web' && images.length > 1) {
+  if (Platform.OS !== 'web' && inspection.imagenes.length > 0 && images.length !== inspection.imagenes.length) {
+    throw new Error(`No se pudieron preparar ${inspection.imagenes.length - images.length} imagen(es) para enviar. Abre la inspección y vuelve a tomar las fotos faltantes.`);
+  }
+
+  if (Platform.OS !== 'web' && images.length > 0) {
     let lastResponse = await postInspectionFormData(await buildLaravelInspectionFormData(inspection, []));
 
-    for (const image of images) {
-      lastResponse = await postInspectionFormData(await buildLaravelInspectionFormData(inspection, [image]));
+    for (const [index, image] of images.entries()) {
+      lastResponse = await uploadImageWithRetry(inspection, image, index + 1);
     }
 
     return lastResponse;
