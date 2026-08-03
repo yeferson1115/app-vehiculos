@@ -106,6 +106,8 @@ const isDownloadableImageUrl = (uri: string) => /^https?:\/\//i.test(uri);
 
 const isReadableLocalImageUri = (uri: string) => /^(file|content|asset):\/\//i.test(uri);
 
+const canUploadNativeFileUri = (uri: string) => /^(file|content):\/\//i.test(uri);
+
 type FormDataImagePart = string | { uri: string; name: string; type: string };
 
 const IMAGE_UPLOAD_RETRIES = 3;
@@ -117,6 +119,14 @@ const wait = (milliseconds: number) => new Promise((resolve) => {
 
 const resolveImageData = async (image: InspectionImage, index: number): Promise<FormDataImagePart | null> => {
   const normalizedImage = normalizeInspectionImage(image, index);
+
+  if (Platform.OS !== 'web' && canUploadNativeFileUri(normalizedImage.uri)) {
+    return {
+      uri: normalizedImage.uri,
+      name: normalizedImage.name,
+      type: normalizedImage.type,
+    };
+  }
 
   if (normalizedImage.dataUri) {
     return normalizedImage.dataUri;
@@ -435,13 +445,23 @@ export const submitInspectionToLaravel = async (inspection: InspectionItem) => {
   }
 
   if (Platform.OS !== 'web' && images.length > 0) {
-    let lastResponse = await postInspectionFormData(await buildLaravelInspectionFormData(inspection, []));
+    try {
+      const response = await postInspectionFormData(await buildLaravelInspectionFormData(inspection, images));
 
-    for (const [index, image] of images.entries()) {
-      lastResponse = await uploadImageWithRetry(inspection, image, index + 1);
+      if (getResponseImageCount(response) >= images.length) {
+        return response;
+      }
+
+      throw new Error('El servidor respondió, pero no confirmó que guardó todas las imágenes.');
+    } catch {
+      let lastResponse = await postInspectionFormData(await buildLaravelInspectionFormData(inspection, []));
+
+      for (const [index, image] of images.entries()) {
+        lastResponse = await uploadImageWithRetry(inspection, image, index + 1);
+      }
+
+      return lastResponse;
     }
-
-    return lastResponse;
   }
 
   return postInspectionFormData(await buildLaravelInspectionFormData(inspection, images));
