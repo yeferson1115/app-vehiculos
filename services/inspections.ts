@@ -120,14 +120,6 @@ const wait = (milliseconds: number) => new Promise((resolve) => {
 const resolveImageData = async (image: InspectionImage, index: number): Promise<FormDataImagePart | null> => {
   const normalizedImage = normalizeInspectionImage(image, index);
 
-  if (Platform.OS !== 'web' && canUploadNativeFileUri(normalizedImage.uri)) {
-    return {
-      uri: normalizedImage.uri,
-      name: normalizedImage.name,
-      type: normalizedImage.type,
-    };
-  }
-
   if (normalizedImage.dataUri) {
     return normalizedImage.dataUri;
   }
@@ -147,6 +139,14 @@ const resolveImageData = async (image: InspectionImage, index: number): Promise<
 
     return toDataUri(base64, normalizedImage.type);
   } catch {
+    if (Platform.OS !== 'web' && canUploadNativeFileUri(normalizedImage.uri)) {
+      return {
+        uri: normalizedImage.uri,
+        name: normalizedImage.name,
+        type: normalizedImage.type,
+      };
+    }
+
     return null;
   }
 };
