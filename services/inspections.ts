@@ -385,19 +385,53 @@ const getSyncErrorMessage = (error: unknown) => {
 
 
 const postInspectionFormData = async (formData: FormData): Promise<LaravelSaveResponse> => {
-  const { data } = await axios.post<LaravelSaveResponse>(
-    `${API_URL}${INSPECTION_SAVE_PATH}`,
-    formData,
-    {
+  const url = `${API_URL}${INSPECTION_SAVE_PATH}`;
+  const authHeaders = await getAuthHeaders();
+
+  if (Platform.OS === 'web') {
+    const { data } = await axios.post<LaravelSaveResponse>(
+      url,
+      formData,
+      {
+        headers: {
+          Accept: 'application/json',
+          ...authHeaders,
+        },
+        timeout: INSPECTION_SYNC_TIMEOUT_MS,
+      },
+    );
+
+    return data;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), INSPECTION_SYNC_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
       headers: {
         Accept: 'application/json',
-        ...(await getAuthHeaders()),
+        ...authHeaders,
       },
-      timeout: INSPECTION_SYNC_TIMEOUT_MS,
-    },
-  );
+      body: formData,
+      signal: controller.signal,
+    });
+    const responseText = await response.text();
+    const data = responseText ? JSON.parse(responseText) as LaravelSaveResponse : {};
 
-  return data;
+    if (!response.ok) {
+      throw new Error(
+        data && typeof data === 'object' && 'message' in data && typeof data.message === 'string'
+          ? data.message
+          : `Error ${response.status} al guardar en Laravel.`,
+      );
+    }
+
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
 };
 
 const getResponseImageCount = (response: LaravelSaveResponse) => (
