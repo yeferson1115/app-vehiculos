@@ -223,6 +223,10 @@ export default function NewInspectionScreen() {
         name,
         type,
         dataUri: toDataUri(asset.base64, type),
+        syncStatus: 'pending',
+        syncAttempts: 0,
+        syncedAt: null,
+        lastSyncError: null,
       };
 
       setImagenes((prev) => [...prev, image]);
@@ -433,7 +437,20 @@ export default function NewInspectionScreen() {
 
           <View style={styles.grid}>
             {imagenes.map((image) => (
-              <Image key={`${image.uri}-${image.name}`} source={{ uri: image.uri }} style={styles.preview} />
+              <View key={`${image.uri}-${image.name}`} style={styles.previewContainer}>
+                <Image source={{ uri: image.uri }} style={styles.preview} />
+                <View style={[
+                  styles.imageSyncBadge,
+                  image.syncStatus === 'sent' ? styles.imageSyncBadgeSent : styles.imageSyncBadgePending,
+                ]}>
+                  <Ionicons
+                    name={image.syncStatus === 'sent' ? 'cloud-done' : 'cloud-upload-outline'}
+                    size={13}
+                    color="#FFF"
+                  />
+                  <Text style={styles.imageSyncBadgeText}>{image.syncStatus === 'sent' ? 'Subida' : 'Pendiente'}</Text>
+                </View>
+              </View>
             ))}
           </View>
 
@@ -561,7 +578,24 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: { color: '#B91C1C', fontWeight: '600' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  previewContainer: { width: 94, height: 94, borderRadius: 10, overflow: 'hidden' },
   preview: { width: 94, height: 94, borderRadius: 10 },
+  imageSyncBadge: {
+    position: 'absolute',
+    left: 4,
+    right: 4,
+    bottom: 4,
+    borderRadius: 8,
+    paddingHorizontal: 5,
+    paddingVertical: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  imageSyncBadgeSent: { backgroundColor: '#15803D' },
+  imageSyncBadgePending: { backgroundColor: '#B45309' },
+  imageSyncBadgeText: { color: '#FFF', fontSize: 10, fontWeight: '700' },
   primaryButton: {
     backgroundColor: '#E11D2E',
     height: 50,
