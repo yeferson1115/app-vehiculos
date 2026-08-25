@@ -26,6 +26,10 @@ export interface InspectionImage {
   name: string;
   type: string;
   dataUri?: string | null;
+  syncStatus: InspectionSyncStatus;
+  syncAttempts: number;
+  syncedAt?: string | null;
+  lastSyncError?: string | null;
 }
 
 export interface InspectionItem {
@@ -173,6 +177,10 @@ const normalizeInspectionImage = (
       name: getImageName(image, index),
       type,
       dataUri: image.startsWith('data:') ? image : null,
+      syncStatus: 'pending',
+      syncAttempts: 0,
+      syncedAt: null,
+      lastSyncError: null,
     };
   }
 
@@ -184,6 +192,12 @@ const normalizeInspectionImage = (
     name: image.name ?? getImageName(uri, index),
     type,
     dataUri: image.dataUri ?? toDataUri(image.base64 ?? image.data, type),
+    // Las inspecciones guardadas antes de este cambio no tenían estado por foto.
+    // Una inspección ya enviada confirma que sus fotos también llegaron al servidor.
+    syncStatus: image.syncStatus ?? 'pending',
+    syncAttempts: image.syncAttempts ?? 0,
+    syncedAt: image.syncedAt ?? null,
+    lastSyncError: image.lastSyncError ?? null,
   };
 };
 
@@ -222,7 +236,14 @@ const parseStoredInspections = (raw: string | null): InspectionItem[] => {
     tipoServicio: item.tipoServicio ?? 'Avaluo',
     observaciones: item.observaciones ?? '',
     imagenes: Array.isArray(item.imagenes)
-      ? item.imagenes.map((image, index) => normalizeInspectionImage(image, index))
+      ? item.imagenes.map((image, index) => {
+        const normalizedImage = normalizeInspectionImage(image, index);
+        const isLegacyImage = typeof image === 'string' || !image.syncStatus;
+
+        return isLegacyImage && item.syncStatus === 'sent'
+          ? { ...normalizedImage, syncStatus: 'sent' as const, syncedAt: item.syncedAt ?? null }
+          : normalizedImage;
+      })
       : [],
     createdAt: item.createdAt ?? new Date().toISOString(),
     syncStatus: item.syncStatus ?? 'pending',
@@ -545,29 +566,11 @@ const uploadImageWithRetry = async (inspection: InspectionItem, image: UploadIma
   throw lastError;
 };
 
-export const submitInspectionToLaravel = async (inspection: InspectionItem) => {
-  const images = await resolveInspectionImagesForUpload(inspection);
-
-  if (Platform.OS !== 'web' && inspection.imagenes.length > 0 && images.length !== inspection.imagenes.length) {
-    throw new Error(`No se pudieron preparar ${inspection.imagenes.length - images.length} imagen(es) para enviar. Abre la inspección y vuelve a tomar las fotos faltantes.`);
-  }
-
-  if (Platform.OS !== 'web') {
-    if (images.length === 0) {
-      return postNativeInspectionPayload(inspection, []);
-    }
-
-    let lastResponse = await postNativeInspectionPayload(inspection, []);
-
-    for (const [index, image] of images.entries()) {
-      lastResponse = await uploadImageWithRetry(inspection, image, index + 1);
-    }
-
-    return lastResponse;
-  }
-
-  return postInspectionFormData(await buildLaravelInspectionFormData(inspection, images));
-};
+const postInspectionWithoutImages = (inspection: InspectionItem) => (
+  Platform.OS === 'web'
+    ? buildLaravelInspectionFormData(inspection, []).then(postInspectionFormData)
+    : postNativeInspectionPayload(inspection, [])
+);
 
 const getSavedInspectionServerId = (response: LaravelSaveResponse) =>
   response.id
@@ -590,6 +593,86 @@ const markInspectionAsFailed = (inspection: InspectionItem, error: unknown): Ins
   lastSyncError: getSyncErrorMessage(error),
 });
 
+const markImageAsSent = (image: InspectionImage): InspectionImage => ({
+  ...image,
+  syncStatus: 'sent',
+  syncedAt: new Date().toISOString(),
+  lastSyncError: null,
+});
+
+const markImageAsFailed = (image: InspectionImage, error: unknown): InspectionImage => ({
+  ...image,
+  syncStatus: 'failed',
+  syncAttempts: image.syncAttempts + 1,
+  lastSyncError: getSyncErrorMessage(error),
+});
+
+const getPendingImageCount = (inspection: InspectionItem) => (
+  inspection.imagenes.filter((image) => image.syncStatus !== 'sent').length
+);
+
+/**
+ * Guarda el ingreso y reintenta únicamente las fotos que todavía no fueron
+ * confirmadas por Laravel. El progreso se persiste foto a foto para que un
+ * reintento posterior nunca vuelva a subir las que ya llegaron al servidor.
+ */
+const syncInspectionToLaravel = async (
+  inspection: InspectionItem,
+  onProgress?: (inspection: InspectionItem) => Promise<void>,
+) => {
+  let workingInspection = { ...inspection };
+
+  try {
+    const response = await postInspectionWithoutImages(workingInspection);
+    workingInspection = {
+      ...workingInspection,
+      serverId: getSavedInspectionServerId(response) ?? workingInspection.serverId ?? null,
+      lastSyncError: null,
+    };
+    await onProgress?.(workingInspection);
+
+    for (const [index, image] of workingInspection.imagenes.entries()) {
+      if (image.syncStatus === 'sent') {
+        continue;
+      }
+
+      try {
+        const imagePart = await resolveImageData(image, index);
+
+        if (!imagePart) {
+          throw new Error(`No se pudo preparar la imagen ${index + 1} para enviar. Abre la inspección y vuelve a tomarla.`);
+        }
+
+        await uploadImageWithRetry(workingInspection, imagePart, index + 1);
+        workingInspection = {
+          ...workingInspection,
+          imagenes: workingInspection.imagenes.map((currentImage, currentIndex) => (
+            currentIndex === index ? markImageAsSent(currentImage) : currentImage
+          )),
+        };
+      } catch (error) {
+        workingInspection = {
+          ...workingInspection,
+          imagenes: workingInspection.imagenes.map((currentImage, currentIndex) => (
+            currentIndex === index ? markImageAsFailed(currentImage, error) : currentImage
+          )),
+        };
+      }
+
+      await onProgress?.(workingInspection);
+    }
+
+    if (getPendingImageCount(workingInspection) > 0) {
+      const firstFailedImage = workingInspection.imagenes.find((image) => image.syncStatus !== 'sent');
+      throw new Error(firstFailedImage?.lastSyncError ?? 'Quedan imágenes pendientes por enviar.');
+    }
+
+    return markInspectionAsSent(workingInspection, response);
+  } catch (error) {
+    return markInspectionAsFailed(workingInspection, error);
+  }
+};
+
 
 const storeInspection = async (inspection: InspectionItem) => {
   const current = await getStoredInspections().catch(() => []);
@@ -610,28 +693,14 @@ export const saveInspectionWithImmediateSync = async (inspection: InspectionItem
     lastSyncError: null,
   };
 
-  try {
-    const response = await submitInspectionToLaravel(pendingInspection);
-    const sentInspection = markInspectionAsSent(pendingInspection, response);
-    await storeInspection(sentInspection).catch(() => undefined);
-    return sentInspection;
-  } catch (error) {
-    const failedInspection = markInspectionAsFailed(pendingInspection, error);
-    await storeInspection(failedInspection);
-    return failedInspection;
-  }
+  const syncedInspection = await syncInspectionToLaravel(pendingInspection, storeInspection);
+  await storeInspection(syncedInspection);
+  return syncedInspection;
 };
 
 export const syncInspection = async (inspection: InspectionItem) => {
   const current = await getStoredInspections();
-  let syncedInspection: InspectionItem;
-
-  try {
-    const response = await submitInspectionToLaravel(inspection);
-    syncedInspection = markInspectionAsSent(inspection, response);
-  } catch (error) {
-    syncedInspection = markInspectionAsFailed(inspection, error);
-  }
+  const syncedInspection = await syncInspectionToLaravel(inspection, storeInspection);
 
   const exists = current.some((item) => item.id === inspection.id);
   const updated = exists
@@ -655,16 +724,15 @@ export const syncPendingInspections = async (): Promise<SyncResult> => {
       continue;
     }
 
-    try {
-      const response = await submitInspectionToLaravel(inspection);
-      const sentInspection = markInspectionAsSent(inspection, response);
-      sent.push(sentInspection);
-      updated.push(sentInspection);
-    } catch (error) {
-      const failedInspection = markInspectionAsFailed(inspection, error);
-      failed.push(failedInspection);
-      updated.push(failedInspection);
+    const syncedInspection = await syncInspectionToLaravel(inspection, storeInspection);
+
+    if (syncedInspection.syncStatus === 'sent') {
+      sent.push(syncedInspection);
+    } else {
+      failed.push(syncedInspection);
     }
+
+    updated.push(syncedInspection);
   }
 
   await saveInspections(updated);

@@ -209,6 +209,11 @@ export default function LoginScreen() {
 
   const totalListedItems = avaluosTotal + filteredLocalInspections.length;
 
+  const getImageSyncSummary = (inspection: InspectionItem) => {
+    const uploaded = inspection.imagenes.filter((image) => image.syncStatus === 'sent').length;
+    return { uploaded, pending: inspection.imagenes.length - uploaded };
+  };
+
   const formatDate = (date?: string | null) => {
     if (!date) {
       return 'Sin fecha';
@@ -331,21 +336,35 @@ export default function LoginScreen() {
                 {avaluosError ? <Text style={styles.errorText}>{avaluosError}</Text> : null}
                 {isLoadingAvaluos ? <Text style={styles.emptyText}>Cargando avalúos...</Text> : null}
                 {filteredLocalInspections.map((inspection) => (
-                  <Pressable
-                    key={inspection.id}
-                    style={[styles.listItem, styles.localListItem]}
-                    onPress={() => router.push({ pathname: '/explore', params: { inspectionId: inspection.id } })}>
-                    <View style={styles.listItemHeader}>
-                      <Text style={styles.listPlate}>{inspection.placa || 'Sin placa'}</Text>
-                      <Text style={styles.localBadge}>
-                        {inspection.syncStatus === 'sent' ? 'Sincronizada' : 'Guardada local'}
-                      </Text>
-                    </View>
-                    <Text style={styles.listMeta}>Servicio: {inspection.tipoServicio}</Text>
-                    <Text style={styles.listMeta}>Kilometraje: {inspection.kilometraje || 'N/A'}</Text>
-                    <Text style={styles.listMeta}>Fecha: {formatDate(inspection.createdAt)}</Text>
-                    <Text style={styles.editHint}>Toca para editar y volver a sincronizar</Text>
-                  </Pressable>
+                  (() => {
+                    const imageSummary = getImageSyncSummary(inspection);
+
+                    return (
+                      <Pressable
+                        key={inspection.id}
+                        style={[styles.listItem, styles.localListItem]}
+                        onPress={() => router.push({ pathname: '/explore', params: { inspectionId: inspection.id } })}>
+                        <View style={styles.listItemHeader}>
+                          <Text style={styles.listPlate}>{inspection.placa || 'Sin placa'}</Text>
+                          <Text style={styles.localBadge}>Guardada local</Text>
+                        </View>
+                        <Text style={styles.listMeta}>Servicio: {inspection.tipoServicio}</Text>
+                        <Text style={styles.listMeta}>Kilometraje: {inspection.kilometraje || 'N/A'}</Text>
+                        <Text style={styles.listMeta}>Fecha: {formatDate(inspection.createdAt)}</Text>
+                        <View style={styles.imageSummaryRow}>
+                          <View style={[styles.imageSummaryBadge, styles.uploadedImageBadge]}>
+                            <Ionicons name="cloud-done" size={14} color="#166534" />
+                            <Text style={styles.uploadedImageText}>Subidas: {imageSummary.uploaded}</Text>
+                          </View>
+                          <View style={[styles.imageSummaryBadge, styles.pendingImageBadge]}>
+                            <Ionicons name="cloud-upload-outline" size={14} color="#9A3412" />
+                            <Text style={styles.pendingImageText}>Pendientes: {imageSummary.pending}</Text>
+                          </View>
+                        </View>
+                        <Text style={styles.editHint}>Toca para ver las marcas de las fotos y sincronizar las pendientes</Text>
+                      </Pressable>
+                    );
+                  })()
                 ))}
 
                 {!isLoadingAvaluos && avaluos.length === 0 && filteredLocalInspections.length === 0 ? (
@@ -518,5 +537,18 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
     borderRadius: 999,
   },
+  imageSummaryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  imageSummaryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  uploadedImageBadge: { backgroundColor: '#DCFCE7' },
+  pendingImageBadge: { backgroundColor: '#FFEDD5' },
+  uploadedImageText: { color: '#166534', fontSize: 11, fontWeight: '700' },
+  pendingImageText: { color: '#9A3412', fontSize: 11, fontWeight: '700' },
   editHint: { color: '#B91C1C', fontSize: 12, fontWeight: '600', marginTop: 8 },
 });
